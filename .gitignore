@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+*.pyo
+.env
+smc_report.html
+smc_report.json
