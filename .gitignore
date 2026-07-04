@@ -4,3 +4,5 @@ __pycache__/
 .env
 smc_report.html
 smc_report.json
+simulated_report.json
+reports/

@@ -1,34 +1,56 @@
-# Ruflo / Claude Session Init Prompt
+# Ruflo / Claude Session Prompt — SMC Backtest Pipeline
 
-Paste this as your first message when starting a Claude or Ruflo session:
+Use after running `./scripts/run_pipeline.sh` (or the three Python steps below).
 
 ---
 
-I am running an SMC (Smart Money Concepts) backtest on EURUSD for the last 60 days.
+## Setup (once per machine)
 
-**Context file:** Please read `SMC_DEFINITIONS.md` in this folder for the exact definitions
-of IDM, POI (OB/FVG), SMT, BOS, PDH/PDL, and A+ setup criteria.
+```bash
+cd smc-backtest
+npx ruflo@latest init --wizard
+claude mcp add ruflo -- npx -y ruflo@latest mcp start
+```
 
-**Pre-computed data:** The file `smc_report.json` (or `smc_report.html`) contains the output
-from my detection script. Each row represents a potential trade setup.
+---
+
+## Regenerate data (before each review session)
+
+```bash
+./scripts/run_pipeline.sh 60 both
+```
+
+Or manually:
+
+```bash
+python3 smc_detector.py --days 60 --session both --report json --output smc_report
+python3 scripts/simulator.py
+python3 scripts/generate_review.py
+```
+
+---
+
+## Paste this into Ruflo / Claude Code
+
+I am reviewing an SMC backtest on **EURUSD** (15m, 60 days) calibrated to **Salim's rules**.
+
+**Read first:**
+- `SMC_DEFINITIONS.md` — IDM, POI, SMT, sessions (lokz / ny-am), A+ criteria, protected SL / liquidity TP
+- `reports/expert_review.md` — full A+ trade log with Win/Loss simulation
+- `simulated_report.json` — raw rows with `outcome`, `entry_price`, `stop_loss`, `take_profit`
 
 **Your tasks:**
 
-1. Read `SMC_DEFINITIONS.md` first so you understand the exact terminology.
-2. Load `smc_report.json` and filter for rows where `is_aplus: true`.
-3. For each A+ setup, verify:
-   - Was the PDH or PDL actually swept (wick beyond, then close back inside)?
-   - Was the IDM swept before price reached the POI?
-   - Is the POI type (OB / FVG / OB+FVG) consistent with the definition in SMC_DEFINITIONS.md?
-   - If SMT confluence is marked true, note the DXY divergence detail.
-4. Generate a clean expert-review summary with:
-   - Total A+ setups
-   - Win rate (based on whether price reached TP before SL)
-   - A table: Time | Direction | Session | POI Type | SMT | Notes
-   - Flag any setup where the IDM-to-POI sequence seems questionable
+1. Confirm each A+ row matches Salim's sequence: liquidity sweep → IDM sweep → POI retest in kill zone.
+2. Flag setups where IDM was swept **on the entry candle** (may be too aggressive).
+3. Spot-check these benchmark trades Salim mentioned:
+   - **3 July ~9am UK** — EURUSD short near 1.1457 (lokz)
+   - **27 May ~1.165** — EURUSD short (ny-am)
+4. Summarize for Salim:
+   - Total A+, win rate, SMT count
+   - Table of questionable setups only (wrong session, weak IDM, RR &lt; 2)
+   - Suggested rule tweaks for `smc_detector.py`
 
-**Expert review note:** This output will be reviewed by an SMC expert (Salim) who will
-verify that the IDM identification and POI reactions are accurate per the definitions.
-Please make the reasoning transparent so he can spot any misclassifications.
+**Output:** Update `reports/expert_review.md` or a short `reports/salim_feedback.md` Salim can reply to on WhatsApp.
 
 ---

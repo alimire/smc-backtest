@@ -21,7 +21,20 @@ Default scanner filter: **lokz + ny-am** (`session=both`).
 ## Entry model
 
 - Scan for **POI retests** in kill zones (not BOS candle only)
-- SL beyond POI wick; TP at next liquidity pool (min 1:2 RR)
+
+## Risk parameters (Salim v2 — coded)
+
+- **SL:** Beyond the **protected high/low** from the IDM sweep window (extreme between IDM and entry), plus buffer
+- **TP:** Nearest **liquidity pool only** (PDH/PDL, Asia H/L, local swing) — no forced 2R override on TP
+- **Filter:** Discard setup if liquidity-based RR is below 2.0
+
+## Pipeline
+
+```bash
+bash scripts/run_pipeline.sh 60 both
+```
+
+Produces `smc_report.json` → `simulated_report.json` → `reports/expert_review.md`
 
 ## Symbols
 

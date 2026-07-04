@@ -497,33 +497,54 @@ def find_next_liquidity_tp(
     direction: str,
     min_rr: float,
     buf: float,
+    idm: Optional[SwingPoint] = None,
 ) -> tuple[float, float]:
-    """TP at next liquidity pool; SL beyond POI wick."""
+    """TP at next liquidity pool; SL beyond protected high/low."""
     row = ctx[entry_idx] if entry_idx < len(ctx) else {}
     if direction == "bearish":
-        sl = entry + buf * 3
-        for i in range(max(0, entry_idx - 8), entry_idx):
-            sl = max(sl, candles[i].high + buf)
+        if idm is not None:
+            protected_high = max(idm.price, max(candles[k].high for k in range(idm.index, entry_idx + 1)))
+            sl = protected_high + buf
+        else:
+            sl = entry + buf * 3
+            for i in range(max(0, entry_idx - 8), entry_idx):
+                sl = max(sl, candles[i].high + buf)
+        
         targets = [row.get("pdl"), row.get("asia_low"), row.get("day_low")]
         seg_low = min(c.low for c in candles[max(0, entry_idx - 20) : entry_idx])
         targets.append(seg_low)
         valid = [t for t in targets if t and t < entry - buf]
+        
+        # Fallback to search lookback 60 candles for local low if no daily/session target found
+        if not valid:
+            seg_low_60 = min(c.low for c in candles[max(0, entry_idx - 60) : entry_idx])
+            if seg_low_60 < entry - buf:
+                valid.append(seg_low_60)
+                
         tp = min(valid) if valid else entry - (sl - entry) * min_rr
-        risk = sl - entry
-        if risk > 0 and (entry - tp) / risk < min_rr:
-            tp = entry - risk * min_rr
         return sl, tp
-    sl = entry - buf * 3
-    for i in range(max(0, entry_idx - 8), entry_idx):
-        sl = min(sl, candles[i].low - buf)
+    
+    # bullish / long
+    if idm is not None:
+        protected_low = min(idm.price, min(candles[k].low for k in range(idm.index, entry_idx + 1)))
+        sl = protected_low - buf
+    else:
+        sl = entry - buf * 3
+        for i in range(max(0, entry_idx - 8), entry_idx):
+            sl = min(sl, candles[i].low - buf)
+            
     targets = [row.get("pdh"), row.get("asia_high"), row.get("day_high")]
     seg_high = max(c.high for c in candles[max(0, entry_idx - 20) : entry_idx])
     targets.append(seg_high)
     valid = [t for t in targets if t and t > entry + buf]
+    
+    # Fallback to search lookback 60 candles for local high if no daily/session target found
+    if not valid:
+        seg_high_60 = max(c.high for c in candles[max(0, entry_idx - 60) : entry_idx])
+        if seg_high_60 > entry + buf:
+            valid.append(seg_high_60)
+            
     tp = max(valid) if valid else entry + (entry - sl) * min_rr
-    risk = entry - sl
-    if risk > 0 and (tp - entry) / risk < min_rr:
-        tp = entry + risk * min_rr
     return sl, tp
 
 
@@ -602,7 +623,7 @@ def scan_setups(
             elif fvg:
                 entry = (fvg.top + fvg.bottom) / 2
 
-            sl, tp = find_next_liquidity_tp(candles, ctx, i, entry, direction, min_rr, buf)
+            sl, tp = find_next_liquidity_tp(candles, ctx, i, entry, direction, min_rr, buf, idm)
             risk = abs(entry - sl)
             if risk <= 0:
                 continue
