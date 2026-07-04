@@ -1,52 +1,29 @@
-# SMC Trading Methodology Definitions
+# SMC Trading Methodology — Salim's Rules (coded)
 
-## Core Concepts
+## Sessions (UK time)
 
-### IDM (Inducement)
-The last pullback/swing before a structural shift (BOS/CHOCH).
-- **Valid IDM**: Must be taken (swept) before price reaches the POI
-- **IDM Sweep**: Price wicks through the IDM low/high, then reverses
-- **Invalidation**: POI broken before IDM is swept
+| Label | Window | Use |
+|-------|--------|-----|
+| **Asia** | 00:00–06:59 | Build Asia high/low liquidity |
+| **lokz** | 07:00–09:59 | London kill zone (includes 9am UK) |
+| **ny-am** | 14:30–16:00 | NY morning kill zone |
+| **ny-pm** | 16:00–19:00 | NY afternoon |
 
-### POI (Point of Interest)
-Refined entry zones — either an Order Block or Fair Value Gap:
-- **Order Block (OB)**: Last bearish candle before a bullish BOS (bullish OB), or last bullish candle before a bearish BOS (bearish OB)
-- **FVG (Fair Value Gap)**: 3-candle imbalance where candle 1 high and candle 3 low don't overlap (bullish), or candle 1 low and candle 3 high don't overlap (bearish)
-- **Refined POI**: OB + FVG overlap zone (highest probability)
+Default scanner filter: **lokz + ny-am** (`session=both`).
 
-### SMT (Smart Money Technique / Divergence)
-Divergence between correlated pairs indicating liquidity manipulation:
-- **Bullish SMT**: EURUSD makes lower low but DXY fails to make higher high (or vice versa)
-- **Bearish SMT**: EURUSD makes higher high but DXY fails to make lower low
-- **Confirmation**: Used as additional confluence at POI entry
+## A+ sequence (all required)
 
-### BOS (Break of Structure)
-Price closes beyond the previous swing high (bullish BOS) or swing low (bearish BOS).
-- Indicates shift in market structure
-- Must be a **close** beyond structure, not just a wick
+1. **Liquidity sweep** — wick through PDH, PDL, Asia high/low, or recent swing extreme
+2. **IDM sweep** — minor inducement swing swept before POI retest
+3. **POI retest** — price returns to OB or FVG in a kill zone
+4. **SMT** (optional confluence) — EURUSD vs DXY divergence at entry
 
-### CHOCH (Change of Character)
-First BOS against the prevailing trend — signals potential reversal.
+## Entry model
 
-### PDH/PDL (Previous Day High / Previous Day Low)
-Liquidity pools resting above PDH or below PDL.
-- **PDH Sweep**: Price wicks above PDH then reverses — bearish
-- **PDL Sweep**: Price wicks below PDL then reverses — bullish
+- Scan for **POI retests** in kill zones (not BOS candle only)
+- SL beyond POI wick; TP at next liquidity pool (min 1:2 RR)
 
----
+## Symbols
 
-## A+ Setup Criteria
-
-A trade qualifies as A+ when ALL of the following are met:
-
-1. **Session**: NY Open (9:30–11:00 EST) or London Open (7:00–10:00 GMT) only
-2. **Liquidity Sweep**: PDH or PDL liquidity taken (wick above/below, then close back inside)
-3. **IDM Sweep**: After PDH/PDL sweep, price sweeps the IDM (last pullback low/high)
-4. **POI Entry**: Price returns to a confirmed Order Block or FVG
-5. **SMT Confluence** (optional but preferred): DXY divergence at the POI
-6. **Confirmation**: 5m or 15m candle close back inside the OB/FVG
-
-## Risk Parameters
-- SL: Below the wick of the POI candle (+ small buffer)
-- TP: Next liquidity pool (opposing PDH/PDL, equal highs/lows)
-- Min RR: 1:2
+- **EURUSD** — primary; DXY used for SMT
+- **DXY** — scannable; EURUSD used for SMT

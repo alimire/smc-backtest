@@ -78,7 +78,7 @@
 
 <header>
   <h1>📈 SMC Backtest</h1>
-  <span>EURUSD · Smart Money Concepts · A+ Setup Scanner</span>
+  <span>Salim SMC rules · lokz / ny-am kill zones · A+ scanner</span>
 </header>
 
 <div class="container">
@@ -87,7 +87,11 @@
   <div class="controls">
     <div class="field">
       <label>Symbol</label>
-      <input id="symbol" value="EURUSD=X" style="width:120px">
+      <select id="symbol">
+        <option value="EURUSD=X" selected>EURUSD</option>
+        <option value="DX-Y.NYB">DXY</option>
+        <option value="GBPUSD=X">GBPUSD</option>
+      </select>
     </div>
     <div class="field">
       <label>Days</label>
@@ -100,9 +104,10 @@
     <div class="field">
       <label>Session</label>
       <select id="session">
-        <option value="both" selected>NY + London</option>
-        <option value="NY">NY Open only</option>
-        <option value="London">London Open only</option>
+        <option value="both" selected>lokz + ny-am (Salim)</option>
+        <option value="lokz">lokz only (7–10am UK)</option>
+        <option value="ny-am">ny-am only</option>
+        <option value="ny-pm">ny-pm only</option>
         <option value="all">All sessions</option>
       </select>
     </div>
@@ -226,7 +231,7 @@ function renderTable(rows) {
   let html = `<table>
     <tr>
       <th>Time (UTC)</th><th>Dir</th><th>Entry</th><th>SL</th><th>TP</th>
-      <th>RR</th><th>PDH/L</th><th>IDM</th><th>POI</th><th>SMT</th>
+      <th>RR</th><th>Liq</th><th>IDM</th><th>POI</th><th>SMT</th>
       <th>Session</th><th>A+</th><th>Notes</th>
     </tr>`;
 
