@@ -3,7 +3,7 @@ SMC Backtest Web App — Flask server
 Salim can run backtests from any browser.
 """
 
-from flask import Flask, render_template, request, jsonify
+from flask import Flask, render_template, request, jsonify, make_response
 import threading
 import traceback
 
@@ -20,7 +20,10 @@ _running = False
 
 @app.route("/")
 def index():
-    return render_template("index.html")
+    resp = make_response(render_template("index.html"))
+    resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    resp.headers["Pragma"] = "no-cache"
+    return resp
 
 
 @app.route("/run", methods=["POST"])

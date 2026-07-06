@@ -3,6 +3,9 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
 <title>SMC Backtest — EURUSD</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -81,7 +84,7 @@
 
 <header>
   <h1>📈 SMC Backtest</h1>
-  <span>Salim SMC rules · lokz / ny-am kill zones · A+ scanner</span>
+  <span>Salim SMC rules · lokz / ny-am kill zones · A+ scanner · <em id="appVersion">sim v2</em></span>
 </header>
 
 <div class="container">
@@ -202,11 +205,13 @@ async function runBacktest() {
     document.getElementById('s-total').textContent = data.total;
     document.getElementById('s-aplus').textContent = data.aplus;
     document.getElementById('s-smt').textContent   = data.smt_count;
-    document.getElementById('s-wr').textContent    = (data.sim_win_rate ?? '—') + '%';
+    document.getElementById('s-wr').textContent    = (data.sim_win_rate ?? data.win_rate ?? '—') + '%';
     document.getElementById('s-rr').textContent    = data.avg_planned_rr ?? '—';
     document.getElementById('s-exp').textContent   = (data.expectancy_r != null ? data.expectancy_r + 'R' : '—');
-    document.getElementById('s-wl').textContent    =
-      `${data.sim_wins ?? 0} / ${data.sim_losses ?? 0} / ${data.sim_unresolved ?? 0}`;
+    const wl = document.getElementById('s-wl');
+    if (wl) {
+      wl.textContent = `${data.sim_wins ?? 0} / ${data.sim_losses ?? 0} / ${data.sim_unresolved ?? 0}`;
+    }
     document.getElementById('stats').style.display = 'grid';
     document.getElementById('statsNote').style.display = data.sim_error ? 'none' : 'block';
     if (data.sim_error) {
