@@ -8,6 +8,7 @@ import threading
 import traceback
 
 from smc_detector import scan_setups, TradeSetup
+from simulator_core import simulate_rows
 from dataclasses import asdict
 
 app = Flask(__name__)
@@ -53,14 +54,28 @@ def run_backtest():
             rows.append(d)
 
         aplus = [r for r in rows if r["is_aplus"]]
-        wins  = [r for r in aplus if r["rr_ratio"] >= min_rr]
+
+        try:
+            sim = simulate_rows(rows, symbol=symbol, days=days, interval=interval)
+            rows = sim["rows"]
+        except Exception as sim_err:
+            sim = {
+                "sim_wins": 0, "sim_losses": 0, "sim_unresolved": 0,
+                "sim_win_rate": 0.0, "avg_planned_rr": 0.0, "expectancy_r": 0.0,
+                "sim_error": str(sim_err),
+            }
 
         return jsonify({
             "total":     len(rows),
             "aplus":     len(aplus),
             "smt_count": sum(1 for r in aplus if r["smt_confluence"]),
-            "wins":      len(wins),
-            "win_rate":  round(len(wins) / len(aplus) * 100, 1) if aplus else 0,
+            "sim_wins":       sim.get("sim_wins", 0),
+            "sim_losses":     sim.get("sim_losses", 0),
+            "sim_unresolved": sim.get("sim_unresolved", 0),
+            "sim_win_rate":   sim.get("sim_win_rate", 0),
+            "avg_planned_rr": sim.get("avg_planned_rr", 0),
+            "expectancy_r":   sim.get("expectancy_r", 0),
+            "sim_error":      sim.get("sim_error"),
             "rows":      rows,
         })
     except Exception as e:

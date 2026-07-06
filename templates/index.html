@@ -49,6 +49,9 @@
   .stat .lbl { font-size: 12px; color: #8b949e; margin-top: 4px; }
   .stat.green .val { color: #3fb950; }
   .stat.yellow .val { color: #d29922; }
+  .stat.red .val { color: #f85149; }
+
+  .stats-note { font-size: 11px; color: #8b949e; margin: -12px 0 16px 0; line-height: 1.4; }
 
   .tabs { display: flex; gap: 2px; margin-bottom: 0; }
   .tab { padding: 8px 16px; font-size: 13px; cursor: pointer; border-radius: 6px 6px 0 0;
@@ -133,8 +136,15 @@
     <div class="stat"><div class="val" id="s-total">—</div><div class="lbl">Total setups</div></div>
     <div class="stat green"><div class="val" id="s-aplus">—</div><div class="lbl">A+ setups</div></div>
     <div class="stat yellow"><div class="val" id="s-smt">—</div><div class="lbl">A+ with SMT</div></div>
-    <div class="stat green"><div class="val" id="s-wr">—</div><div class="lbl">Win rate (RR proxy)</div></div>
+    <div class="stat green"><div class="val" id="s-wr">—</div><div class="lbl">Sim win rate (A+)</div></div>
+    <div class="stat"><div class="val" id="s-rr">—</div><div class="lbl">Avg planned RR</div></div>
+    <div class="stat"><div class="val" id="s-exp">—</div><div class="lbl">Expectancy (R)</div></div>
+    <div class="stat red"><div class="val" id="s-wl">—</div><div class="lbl">W / L / open</div></div>
   </div>
+  <p class="stats-note" id="statsNote" style="display:none">
+    Sim win rate = A+ trades where TP hit before SL on forward candles (realistic).
+    Planned RR = distance to liquidity target ÷ risk. Expectancy ≈ edge per 1R risked.
+  </p>
 
   <!-- Tabs -->
   <div class="tabs" id="tabs" style="display:none">
@@ -192,8 +202,17 @@ async function runBacktest() {
     document.getElementById('s-total').textContent = data.total;
     document.getElementById('s-aplus').textContent = data.aplus;
     document.getElementById('s-smt').textContent   = data.smt_count;
-    document.getElementById('s-wr').textContent    = data.win_rate + '%';
+    document.getElementById('s-wr').textContent    = (data.sim_win_rate ?? '—') + '%';
+    document.getElementById('s-rr').textContent    = data.avg_planned_rr ?? '—';
+    document.getElementById('s-exp').textContent   = (data.expectancy_r != null ? data.expectancy_r + 'R' : '—');
+    document.getElementById('s-wl').textContent    =
+      `${data.sim_wins ?? 0} / ${data.sim_losses ?? 0} / ${data.sim_unresolved ?? 0}`;
     document.getElementById('stats').style.display = 'grid';
+    document.getElementById('statsNote').style.display = data.sim_error ? 'none' : 'block';
+    if (data.sim_error) {
+      errBox.textContent = '⚠ Simulation skipped: ' + data.sim_error;
+      errBox.style.display = 'block';
+    }
 
     // Table
     document.getElementById('tabs').style.display = 'flex';
@@ -231,9 +250,16 @@ function renderTable(rows) {
   let html = `<table>
     <tr>
       <th>Time (UTC)</th><th>Dir</th><th>Entry</th><th>SL</th><th>TP</th>
-      <th>RR</th><th>Liq</th><th>IDM</th><th>POI</th><th>SMT</th>
+      <th>RR</th><th>Result</th><th>Liq</th><th>IDM</th><th>POI</th><th>SMT</th>
       <th>Session</th><th>A+</th><th>Notes</th>
     </tr>`;
+
+  const outcome = o => {
+    if (!o || o === '—') return '<span class="cross">—</span>';
+    if (o === 'Win') return '<span class="check">Win</span>';
+    if (o === 'Loss') return '<span class="badge-short">Loss</span>';
+    return '<span style="color:#d29922">' + o + '</span>';
+  };
 
   for (const r of rows) {
     const cls = r.is_aplus ? ' class="aplus"' : '';
@@ -244,6 +270,7 @@ function renderTable(rows) {
       <td>${r.stop_loss}</td>
       <td>${r.take_profit}</td>
       <td>${r.rr_ratio}</td>
+      <td>${outcome(r.outcome)}</td>
       <td>${ck(r.pdh_pdl_swept)}</td>
       <td>${ck(r.idm_swept)}</td>
       <td><b>${r.poi_type}</b></td>

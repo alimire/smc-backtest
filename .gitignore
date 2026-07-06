@@ -6,3 +6,7 @@ smc_report.html
 smc_report.json
 simulated_report.json
 reports/
+.alert_state.json
+.venv/
+credentials/demo.json
+credentials/live.json
