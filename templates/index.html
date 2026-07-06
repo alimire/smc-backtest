@@ -78,13 +78,25 @@
   .empty { text-align: center; padding: 60px; color: #8b949e; font-size: 14px; }
   #error { background: #2d1117; border: 1px solid #f85149; border-radius: 6px;
            padding: 12px 16px; margin-bottom: 16px; color: #f85149; font-size: 13px; display: none; }
+
+  .calc-panel { background: #161b22; border: 1px solid #30363d; border-radius: 8px;
+                padding: 20px; margin-bottom: 24px; }
+  .calc-panel h2 { font-size: 14px; font-weight: 600; color: #58a6ff; margin-bottom: 4px; }
+  .calc-panel .calc-sub { font-size: 11px; color: #8b949e; margin-bottom: 16px; }
+  .calc-controls { display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-end; margin-bottom: 16px; }
+  .calc-out { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; }
+  .calc-out .stat .val { font-size: 22px; }
+  .calc-hint { font-size: 11px; color: #8b949e; margin-top: 12px; line-height: 1.4; }
+  tr.clickable { cursor: pointer; }
+  tr.clickable:hover td { background: #21262d !important; }
+  tr.calc-selected td { outline: 1px solid #58a6ff; outline-offset: -1px; }
 </style>
 </head>
 <body>
 
 <header>
   <h1>📈 SMC Backtest</h1>
-  <span>Salim SMC rules · lokz / ny-am kill zones · A+ scanner · <em id="appVersion">sim v2</em></span>
+  <span>Salim SMC rules · lokz / ny-am kill zones · A+ scanner · <em id="appVersion">sim v2.1</em></span>
 </header>
 
 <div class="container">
@@ -134,6 +146,45 @@
 
   <div id="error"></div>
 
+  <!-- Position size calculator -->
+  <div class="calc-panel" id="calcPanel">
+    <h2>💰 Position size calculator</h2>
+    <p class="calc-sub">Risk is % of account to SL. Click a setup row after backtest to use its RR &amp; prices.</p>
+    <div class="calc-controls">
+      <div class="field">
+        <label>Account ($)</label>
+        <input id="calcAccount" type="number" value="1000" min="1" step="100" style="width:100px">
+      </div>
+      <div class="field">
+        <label>Risk %</label>
+        <input id="calcRiskPct" type="number" value="2" min="0.1" max="100" step="0.5" style="width:80px">
+      </div>
+      <div class="field">
+        <label>RR (this setup)</label>
+        <input id="calcRR" type="number" value="2" min="0.5" step="0.1" style="width:80px">
+      </div>
+      <div class="field">
+        <label>Entry (optional)</label>
+        <input id="calcEntry" type="number" step="0.00001" placeholder="1.08500" style="width:100px">
+      </div>
+      <div class="field">
+        <label>SL (optional)</label>
+        <input id="calcSL" type="number" step="0.00001" placeholder="1.08800" style="width:100px">
+      </div>
+    </div>
+    <div class="calc-out stats" style="margin-bottom:0">
+      <div class="stat"><div class="val" id="calcRiskD">—</div><div class="lbl">$ at risk (1R)</div></div>
+      <div class="stat red"><div class="val" id="calcLoss">—</div><div class="lbl">If SL hit</div></div>
+      <div class="stat green"><div class="val" id="calcWin">—</div><div class="lbl">If TP hit</div></div>
+      <div class="stat yellow"><div class="val" id="calcExp">—</div><div class="lbl">Expected / trade</div></div>
+      <div class="stat"><div class="val" id="calcLots">—</div><div class="lbl">Lots (EURUSD)</div></div>
+    </div>
+    <p class="calc-hint" id="calcHint">
+      Default RR 2 until you run a backtest or click a row. Expected uses backtest expectancy when available (~1.24R).
+      Lots = risk ÷ (SL pips × $10). Salim typically risks 1–2% — not 10%+.
+    </p>
+  </div>
+
   <!-- Stats -->
   <div class="stats" id="stats" style="display:none">
     <div class="stat"><div class="val" id="s-total">—</div><div class="lbl">Total setups</div></div>
@@ -164,6 +215,61 @@
 
 <script>
 let allRows = [];
+let backtestExpectancy = null;
+
+function fmtMoneySigned(n, forceSign) {
+  if (n == null || Number.isNaN(n)) return '—';
+  const prefix = forceSign && n > 0 ? '+' : (n < 0 ? '-' : '');
+  return prefix + '$' + Math.abs(n).toFixed(Math.abs(n) >= 100 ? 0 : 2);
+}
+
+function updateCalculator(fromRow) {
+  const account = parseFloat(document.getElementById('calcAccount').value) || 0;
+  const riskPct = parseFloat(document.getElementById('calcRiskPct').value) || 0;
+  const rr = parseFloat(document.getElementById('calcRR').value) || 0;
+  const entry = parseFloat(document.getElementById('calcEntry').value);
+  const sl = parseFloat(document.getElementById('calcSL').value);
+
+  const riskD = account * (riskPct / 100);
+  const winD = riskD * rr;
+  const lossD = -riskD;
+  const expR = backtestExpectancy != null ? backtestExpectancy : 1.24;
+  const expD = riskD * expR;
+
+  document.getElementById('calcRiskD').textContent = fmtMoneySigned(riskD, false);
+  document.getElementById('calcLoss').textContent = fmtMoneySigned(lossD, false);
+  document.getElementById('calcWin').textContent = fmtMoneySigned(winD, true);
+  document.getElementById('calcExp').textContent = fmtMoneySigned(expD, true);
+
+  let lotsText = '—';
+  if (!Number.isNaN(entry) && !Number.isNaN(sl) && entry !== sl && riskD > 0) {
+    const pips = Math.abs(entry - sl) / 0.0001;
+    if (pips > 0) {
+      const lots = riskD / (pips * 10);
+      lotsText = lots >= 0.01 ? lots.toFixed(2) : lots.toFixed(3);
+    }
+  }
+  document.getElementById('calcLots').textContent = lotsText;
+
+  const hint = document.getElementById('calcHint');
+  if (fromRow) {
+    hint.textContent = `Using setup: RR ${rr} · risk ${riskPct}% of $${account} = ${fmtMoneySigned(riskD, false)} · win target ${fmtMoneySigned(winD, true)}`;
+  }
+}
+
+function selectSetupRow(r, tr) {
+  document.querySelectorAll('tr.calc-selected').forEach(el => el.classList.remove('calc-selected'));
+  if (tr) tr.classList.add('calc-selected');
+  document.getElementById('calcRR').value = r.rr_ratio;
+  document.getElementById('calcEntry').value = r.entry_price;
+  document.getElementById('calcSL').value = r.stop_loss;
+  updateCalculator(true);
+}
+
+['calcAccount', 'calcRiskPct', 'calcRR', 'calcEntry', 'calcSL'].forEach(id => {
+  document.getElementById(id).addEventListener('input', () => updateCalculator(false));
+});
+updateCalculator(false);
 
 async function runBacktest() {
   const btn = document.getElementById('runBtn');
@@ -219,6 +325,12 @@ async function runBacktest() {
       errBox.style.display = 'block';
     }
 
+    backtestExpectancy = data.expectancy_r != null ? parseFloat(data.expectancy_r) : null;
+    if (data.avg_planned_rr && document.getElementById('calcRR').value === '2') {
+      document.getElementById('calcRR').value = data.avg_planned_rr;
+    }
+    updateCalculator(false);
+
     // Table
     document.getElementById('tabs').style.display = 'flex';
     document.getElementById('tableWrap').style.display = 'block';
@@ -266,9 +378,9 @@ function renderTable(rows) {
     return '<span style="color:#d29922">' + o + '</span>';
   };
 
-  for (const r of rows) {
-    const cls = r.is_aplus ? ' class="aplus"' : '';
-    html += `<tr${cls}>
+  rows.forEach((r, i) => {
+    const cls = r.is_aplus ? 'aplus clickable' : 'clickable';
+    html += `<tr class="${cls}" data-idx="${i}">
       <td>${r.time.slice(0,16)}</td>
       <td>${dir(r.direction)}</td>
       <td>${r.entry_price}</td>
@@ -284,9 +396,17 @@ function renderTable(rows) {
       <td>${r.is_aplus ? '⭐' : ''}</td>
       <td style="color:#8b949e">${r.notes || ''}</td>
     </tr>`;
-  }
+  });
   html += '</table>';
   document.getElementById('tableContent').innerHTML = html;
+
+  let tableRows = [...document.getElementById('tableContent').querySelectorAll('tbody tr, table tr')].slice(1);
+  tableRows.forEach(tr => {
+    tr.addEventListener('click', () => {
+      const idx = parseInt(tr.dataset.idx, 10);
+      if (!Number.isNaN(idx) && rows[idx]) selectSetupRow(rows[idx], tr);
+    });
+  });
 }
 </script>
 </body>
