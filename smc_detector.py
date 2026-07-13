@@ -419,6 +419,154 @@ def idm_was_swept(
     return False
 
 
+def dealing_range(candles: list[Candle], from_idx: int, to_idx: int) -> tuple[float, float]:
+    seg = candles[max(0, from_idx) : to_idx + 1]
+    if not seg:
+        return 0.0, 0.0
+    return min(c.low for c in seg), max(c.high for c in seg)
+
+
+def range_position(price: float, lo: float, hi: float) -> float:
+    """0 = range low, 1 = range high."""
+    if hi <= lo:
+        return 0.5
+    return (price - lo) / (hi - lo)
+
+
+def is_major_idm_zone(
+    entry: float,
+    idm: Optional[SwingPoint],
+    direction: str,
+    range_lo: float,
+    range_hi: float,
+    mid_lo: float = 0.35,
+    mid_hi: float = 0.65,
+) -> bool:
+    """Salim: trade at major IDM — premium for shorts, discount for longs, not mid-range."""
+    pos = range_position(entry, range_lo, range_hi)
+    if direction == "bearish":
+        if pos < mid_hi:
+            return False
+        if idm and range_position(idm.price, range_lo, range_hi) < 0.5:
+            return False
+        return True
+    if pos > mid_lo:
+        return False
+    if idm and range_position(idm.price, range_lo, range_hi) > 0.5:
+        return False
+    return True
+
+
+def is_choppy(candles: list[Candle], idx: int, window: int = 24) -> bool:
+    """Skip tight alternating price action (no clear orderflow)."""
+    start = max(0, idx - window)
+    seg = candles[start : idx + 1]
+    if len(seg) < 8:
+        return False
+    net = abs(seg[-1].close - seg[0].open)
+    path = sum(abs(seg[i].close - seg[i - 1].close) for i in range(1, len(seg)))
+    if path <= 0:
+        return True
+    efficiency = net / path
+    pivots = 0
+    for i in range(start + 2, idx - 1):
+        if candles[i].high > candles[i - 1].high and candles[i].high > candles[i + 1].high:
+            pivots += 1
+        if candles[i].low < candles[i - 1].low and candles[i].low < candles[i + 1].low:
+            pivots += 1
+    return efficiency < 0.22 or pivots >= 7
+
+
+def has_real_break_after_liq(
+    bos_list: list[dict],
+    liq_idx: int,
+    entry_idx: int,
+    direction: str,
+) -> bool:
+    """Orderflow shift: BOS in trade direction after liquidity sweep."""
+    for bos in bos_list:
+        if bos["index"] <= liq_idx or bos["index"] > entry_idx:
+            continue
+        if bos["direction"] == direction:
+            return True
+    return False
+
+
+def smt_level_and_tapped(
+    primary: list[Candle],
+    correlated: list[Optional[Candle]],
+    entry_idx: int,
+    direction: str,
+    window: int = 12,
+    buf: float = 0.00015,
+) -> tuple[bool, bool, bool]:
+    """
+    Salim SMT rule:
+    - smt_nearby: divergence visible near entry
+    - smt_tapped: correlated pair swept the SMT liquidity level first
+    - smt_ready: safe to enter (no pending SMT OR SMT already tapped)
+    """
+    if entry_idx < window:
+        return False, False, True
+
+    corr = correlated[entry_idx] if entry_idx < len(correlated) else None
+    if corr is None:
+        return False, False, True
+
+    p_win = primary[entry_idx - window : entry_idx]
+    c_win = [
+        correlated[i] for i in range(entry_idx - window, entry_idx)
+        if i < len(correlated) and correlated[i] is not None
+    ]
+    if len(c_win) < window // 2:
+        return False, False, True
+
+    p = primary[entry_idx]
+    p_low = min(c.low for c in p_win)
+    p_high = max(c.high for c in p_win)
+    c_high = max(c.high for c in c_win)
+    c_low = min(c.low for c in c_win)
+
+    smt_nearby = False
+    smt_level = None
+    smt_form_idx = entry_idx
+
+    if direction == "bearish" and p.high > p_high and corr.high <= c_high:
+        smt_nearby = True
+        smt_level = c_high
+        for i in range(entry_idx - window, entry_idx):
+            ci = correlated[i]
+            if ci and ci.high >= c_high - buf:
+                smt_form_idx = i
+                break
+    elif direction == "bullish" and p.low < p_low and corr.low >= c_low:
+        smt_nearby = True
+        smt_level = c_low
+        for i in range(entry_idx - window, entry_idx):
+            ci = correlated[i]
+            if ci and ci.low <= c_low + buf:
+                smt_form_idx = i
+                break
+
+    if not smt_nearby or smt_level is None:
+        return False, False, True
+
+    tapped = False
+    for i in range(smt_form_idx, entry_idx + 1):
+        ci = correlated[i] if i < len(correlated) else None
+        if ci is None:
+            continue
+        if direction == "bearish" and ci.high >= smt_level - buf:
+            tapped = True
+            break
+        if direction == "bullish" and ci.low <= smt_level + buf:
+            tapped = True
+            break
+
+    smt_ready = tapped
+    return smt_nearby, tapped, smt_ready
+
+
 def check_smt(
     primary: list[Candle],
     correlated: list[Optional[Candle]],
@@ -521,7 +669,9 @@ def find_next_liquidity_tp(
             if seg_low_60 < entry - buf:
                 valid.append(seg_low_60)
                 
-        tp = min(valid) if valid else entry - (sl - entry) * min_rr
+        tp = min(valid) if valid else None
+        if tp is None:
+            return sl, entry - (sl - entry) * min_rr
         return sl, tp
     
     # bullish / long
@@ -544,7 +694,9 @@ def find_next_liquidity_tp(
         if seg_high_60 > entry + buf:
             valid.append(seg_high_60)
             
-    tp = max(valid) if valid else entry + (entry - sl) * min_rr
+    tp = max(valid) if valid else None
+    if tp is None:
+        return sl, entry + (entry - sl) * min_rr
     return sl, tp
 
 
@@ -573,7 +725,7 @@ def scan_setups(
         print("  Correlated pair fetch failed — SMT skipped")
         correlated = [None] * len(candles)
 
-    print(f"Loaded {len(candles)} candles. Scanning (Salim rules)...")
+    print(f"Loaded {len(candles)} candles. Scanning (Salim v3 rules)...")
 
     swings = find_swing_points(candles, lookback=3)
     bos_list = detect_bos(candles, swings)
@@ -616,12 +768,30 @@ def scan_setups(
                 and idm.index >= max(0, liq_idx - 8)
                 and idm_was_swept(candles, idm, i, direction, buf)
             )
+            if not idm_ok:
+                continue
 
             entry = candles[i].close
             if ob:
                 entry = (ob.top + ob.bottom) / 2
             elif fvg:
                 entry = (fvg.top + fvg.bottom) / 2
+
+            r_lo, r_hi = dealing_range(candles, from_idx, i)
+            if not is_major_idm_zone(entry, idm, direction, r_lo, r_hi):
+                continue
+
+            if is_choppy(candles, i):
+                continue
+
+            if not has_real_break_after_liq(bos_list, liq_idx, i, direction):
+                continue
+
+            smt_nearby, smt_tapped, smt_ready = smt_level_and_tapped(
+                candles, correlated, i, direction, buf=buf
+            )
+            if not smt_ready:
+                continue
 
             sl, tp = find_next_liquidity_tp(candles, ctx, i, entry, direction, min_rr, buf, idm)
             risk = abs(entry - sl)
@@ -631,7 +801,7 @@ def scan_setups(
             if rr < min_rr * 0.9:
                 continue
 
-            smt = check_smt(candles, correlated, i, direction)
+            smt = smt_nearby and smt_tapped
             sess = get_session_label(candles[i].time)
 
             key = (_date(candles[i].time), sess, trade_dir, round(entry, 4))
@@ -639,18 +809,20 @@ def scan_setups(
                 continue
             seen.add(key)
 
-            is_aplus = liq_ok and idm_ok and poi_type in ("OB", "FVG", "OB+FVG")
+            is_aplus = (
+                liq_ok and idm_ok and poi_type in ("OB", "FVG", "OB+FVG")
+                and smt_ready
+            )
 
             notes = []
             if liq_src:
                 notes.append(f"liq:{liq_src}")
-            if idm_ok:
-                notes.append("IDM swept ✓")
-            elif idm:
-                notes.append("IDM present, sweep weak")
-            else:
-                notes.append("no IDM")
-            if smt:
+            notes.append("IDM swept ✓")
+            notes.append("BOS after liq ✓")
+            notes.append("major IDM zone ✓")
+            if smt_nearby:
+                notes.append("SMT tapped ✓" if smt_tapped else "SMT wait")
+            elif check_smt(candles, correlated, i, direction):
                 notes.append("SMT ✓")
 
             setups.append(TradeSetup(

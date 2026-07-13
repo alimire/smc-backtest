@@ -1,0 +1,248 @@
+//@version=5
+indicator("Salim SMC A+ Alerts v3", overlay=true, max_labels_count=200, max_lines_count=200)
+
+// ── Settings (Salim v3 — matches smc-backtest Railway app) ───────────────────
+grpSession = "Sessions (UK / Europe-London)"
+useAsia    = input.bool(false, "Asia (00:00–06:59)", group=grpSession)
+useLokz    = input.bool(true,  "London kill zone (07:00–09:59)", group=grpSession)
+useNyAm    = input.bool(true,  "NY AM kill zone (14:30–16:00)", group=grpSession)
+useNyPm    = input.bool(false, "NY PM (16:00–18:59)", group=grpSession)
+
+grpRules = "Salim v3 filters"
+minRR        = input.float(2.0, "Min RR (filter only)", minval=1.0, step=0.5, group=grpRules)
+swingLen     = input.int(3, "Swing lookback", minval=2, maxval=10, group=grpRules)
+rangeLen     = input.int(48, "Dealing range lookback", minval=20, group=grpRules)
+requireBOS   = input.bool(true, "Require real BOS after liq sweep", group=grpRules)
+requireMajor = input.bool(true, "Major IDM only (no mid-range)", group=grpRules)
+requireChop  = input.bool(true, "Skip choppy price action", group=grpRules)
+requireSMT   = input.bool(true, "Wait for SMT tap before entry", group=grpRules)
+dxySymbol    = input.string("TVC:DXY", "DXY symbol for SMT", group=grpRules)
+
+showMarks  = input.bool(true, "Show entry / SL / TP on chart")
+alertAplus = input.bool(true, "Alert on A+ only")
+
+TZ = "Europe/London"
+
+// ── Sessions ─────────────────────────────────────────────────────────────────
+h = hour(time, TZ)
+m = minute(time, TZ)
+mins = h * 60 + m
+
+inAsia  = mins < 420
+inLokz  = mins >= 420 and mins < 600
+inNyAm  = mins >= 870 and mins < 960
+inNyPm  = mins >= 960 and mins < 1140
+inKZ = (useAsia and inAsia) or (useLokz and inLokz) or (useNyAm and inNyAm) or (useNyPm and inNyPm)
+sessLbl = inLokz ? "lokz" : inNyAm ? "ny-am" : inNyPm ? "ny-pm" : inAsia ? "Asia" : "off"
+
+// ── Daily + Asia liquidity ───────────────────────────────────────────────────
+pdh = request.security(syminfo.tickerid, "D", high[1], gaps=barmerge.gaps_off)
+pdl = request.security(syminfo.tickerid, "D", low[1],  gaps=barmerge.gaps_off)
+
+var float asiaH = na
+var float asiaL = na
+if ta.change(time("D", TZ))
+    asiaH := na
+    asiaL := na
+if mins < 420
+    asiaH := na(asiaH) ? high : math.max(asiaH, high)
+    asiaL := na(asiaL) ? low  : math.min(asiaL, low)
+
+pip = syminfo.mintick * 10
+buf = pip * 5
+
+// ── DXY for SMT ──────────────────────────────────────────────────────────────
+dxyH = request.security(dxySymbol, timeframe.period, high, gaps=barmerge.gaps_off)
+dxyL = request.security(dxySymbol, timeframe.period, low,  gaps=barmerge.gaps_off)
+
+// ── Swings / BOS / POI ───────────────────────────────────────────────────────
+ph = ta.pivothigh(high, swingLen, swingLen)
+pl = ta.pivotlow(low, swingLen, swingLen)
+
+var float lastSH = na
+var float lastSL = na
+if not na(ph)
+    lastSH := ph
+if not na(pl)
+    lastSL := pl
+
+bullBOS = not na(lastSH) and close > lastSH
+bearBOS = not na(lastSL) and close < lastSL
+
+var float bullOBt = na
+var float bullOBb = na
+var float bearOBt = na
+var float bearOBb = na
+
+if bullBOS
+    for i = 1 to 25
+        if close[i] < open[i]
+            bullOBt := math.max(open[i], close[i])
+            bullOBb := math.min(open[i], close[i])
+            break
+if bearBOS
+    for i = 1 to 25
+        if close[i] > open[i]
+            bearOBt := math.max(open[i], close[i])
+            bearOBb := math.min(open[i], close[i])
+            break
+
+bullFVG = low > high[2]
+bearFVG = high < low[2]
+
+// ── Liquidity sweep ──────────────────────────────────────────────────────────
+localHi = ta.highest(high, 12)
+localLo = ta.lowest(low, 12)
+
+bearLiq = (not na(pdh) and high >= pdh - pip * 2) or
+          (not na(asiaH) and high >= asiaH - pip * 2) or
+          high >= localHi[1] - pip * 2
+bullLiq = (not na(pdl) and low <= pdl + pip * 2) or
+          (not na(asiaL) and low <= asiaL + pip * 2) or
+          low <= localLo[1] + pip * 2
+
+bearLiqRecent = ta.barssince(bearLiq) <= 48
+bullLiqRecent = ta.barssince(bullLiq) <= 48
+
+var int bearLiqBar = na
+var int bullLiqBar = na
+if bearLiq
+    bearLiqBar := bar_index
+if bullLiq
+    bullLiqBar := bar_index
+
+bearBOSafterLiq = not requireBOS or (not na(bearLiqBar) and bar_index > bearLiqBar and bearBOS)
+bullBOSafterLiq = not requireBOS or (not na(bullLiqBar) and bar_index > bullLiqBar and bullBOS)
+
+// ── IDM + sweep ──────────────────────────────────────────────────────────────
+idmBear = ta.highest(high, 12)[1]
+idmBull = ta.lowest(low, 12)[1]
+idmBearSweep = high >= idmBear - buf
+idmBullSweep = low  <= idmBull + buf
+
+// ── POI retest ───────────────────────────────────────────────────────────────
+inBearOB  = not na(bearOBb) and high >= bearOBb and close <= bearOBt + (bearOBt - bearOBb) * 0.5
+inBearFVG = bearFVG and high >= low[2] and close <= low
+bearPOI = inBearOB or inBearFVG
+bearPoiType = inBearOB and inBearFVG ? "OB+FVG" : inBearOB ? "OB" : inBearFVG ? "FVG" : ""
+
+inBullOB  = not na(bullOBb) and low <= bullOBt and close >= bullOBb - (bullOBt - bullOBb) * 0.5
+inBullFVG = bullFVG and low <= low[2] and close >= high[2]
+bullPOI = inBullOB or inBullFVG
+bullPoiType = inBullOB and inBullFVG ? "OB+FVG" : inBullOB ? "OB" : inBullFVG ? "FVG" : ""
+
+// ── Major IDM zone (premium/discount, not mid-range) ─────────────────────────
+rangeHi = ta.highest(high, rangeLen)
+rangeLo = ta.lowest(low, rangeLen)
+rangeSpan = math.max(rangeHi - rangeLo, syminfo.mintick)
+bearEntry = not na(bearOBb) ? (bearOBt + bearOBb) / 2 : close
+bullEntry = not na(bullOBb) ? (bullOBt + bullOBb) / 2 : close
+bearPos = (bearEntry - rangeLo) / rangeSpan
+bullPos = (bullEntry - rangeLo) / rangeSpan
+majorBear = not requireMajor or (bearPos >= 0.65 and (idmBear - rangeLo) / rangeSpan >= 0.5)
+majorBull = not requireMajor or (bullPos <= 0.35 and (idmBull - rangeLo) / rangeSpan <= 0.5)
+
+// ── Chop filter ──────────────────────────────────────────────────────────────
+netMove = math.abs(close - close[24])
+pathMove = math.sum(math.abs(close - close[1]), 24)
+efficiency = pathMove > 0 ? netMove / pathMove : 0
+notChoppy = not requireChop or efficiency >= 0.22
+
+// ── SMT: wait for correlated tap ─────────────────────────────────────────────
+smtBearNearby = high > ta.highest(high, 12)[1] and dxyH <= ta.highest(dxyH, 12)[1]
+smtBullNearby = low  < ta.lowest(low, 12)[1]  and dxyL >= ta.lowest(dxyL, 12)[1]
+dxySmtHigh = ta.highest(dxyH, 12)[1]
+dxySmtLow  = ta.lowest(dxyL, 12)[1]
+dxyBearTapped = ta.highest(dxyH, 12) >= dxySmtHigh - buf
+dxyBullTapped = ta.lowest(dxyL, 12)  <= dxySmtLow + buf
+smtBearReady = not requireSMT or not smtBearNearby or dxyBearTapped
+smtBullReady = not requireSMT or not smtBullNearby or dxyBullTapped
+
+// ── SL / TP / RR (liquidity-based; no forced 2R TP) ──────────────────────────
+bearSL = math.max(idmBear, ta.highest(high, math.max(1, bar_index - nz(bearLiqBar, bar_index - 12)))) + buf
+bullSL = math.min(idmBull, ta.lowest(low,  math.max(1, bar_index - nz(bullLiqBar, bar_index - 12)))) - buf
+
+bearTP = ta.lowest(low, 20)
+if not na(pdl) and pdl < bearEntry - buf
+    bearTP := math.min(bearTP, pdl)
+if not na(asiaL) and asiaL < bearEntry - buf
+    bearTP := math.min(bearTP, asiaL)
+
+bullTP = ta.highest(high, 20)
+if not na(pdh) and pdh > bullEntry + buf
+    bullTP := math.max(bullTP, pdh)
+if not na(asiaH) and asiaH > bullEntry + buf
+    bullTP := math.max(bullTP, asiaH)
+
+bearRisk = bearSL - bearEntry
+bullRisk = bullEntry - bullSL
+bearRR = bearRisk > 0 and not na(bearTP) ? (bearEntry - bearTP) / bearRisk : 0
+bullRR = bullRisk > 0 and not na(bullTP) ? (bullTP - bullEntry) / bullRisk : 0
+
+// ── A+ signal (Salim v3) ─────────────────────────────────────────────────────
+shortAplus = inKZ and bearLiqRecent and idmBearSweep and bearPOI and bearBOSafterLiq and
+     majorBear and notChoppy and smtBearReady and bearRR >= minRR * 0.9 and not na(bearTP)
+longAplus  = inKZ and bullLiqRecent and idmBullSweep and bullPOI and bullBOSafterLiq and
+     majorBull and notChoppy and smtBullReady and bullRR >= minRR * 0.9 and not na(bullTP)
+
+shortSig = alertAplus ? shortAplus : inKZ and bearPOI and bearLiqRecent
+longSig  = alertAplus ? longAplus  : inKZ and bullPOI and bullLiqRecent
+
+var int lastShortBar = na
+var int lastLongBar  = na
+shortFire = shortSig and (na(lastShortBar) or bar_index - lastShortBar > 8)
+longFire  = longSig  and (na(lastLongBar)  or bar_index - lastLongBar  > 8)
+if shortFire
+    lastShortBar := bar_index
+if longFire
+    lastLongBar := bar_index
+
+// ── Chart marks ──────────────────────────────────────────────────────────────
+plotshape(showMarks and shortFire, title="Short A+", style=shape.triangledown,
+     location=location.abovebar, color=color.new(color.red, 0), size=size.small, text="S")
+plotshape(showMarks and longFire, title="Long A+", style=shape.triangleup,
+     location=location.belowbar, color=color.new(color.lime, 0), size=size.small, text="L")
+
+if showMarks and shortFire
+    label.new(bar_index, high, "SHORT " + sessLbl + " v3\nE:" + str.tostring(bearEntry, format.mintick) +
+         "\nSL:" + str.tostring(bearSL, format.mintick) + "\nTP:" + str.tostring(bearTP, format.mintick) +
+         "\nRR:" + str.tostring(bearRR, "#.##") + " " + bearPoiType,
+         style=label.style_label_down, color=color.red, textcolor=color.white, size=size.small)
+
+if showMarks and longFire
+    label.new(bar_index, low, "LONG " + sessLbl + " v3\nE:" + str.tostring(bullEntry, format.mintick) +
+         "\nSL:" + str.tostring(bullSL, format.mintick) + "\nTP:" + str.tostring(bullTP, format.mintick) +
+         "\nRR:" + str.tostring(bullRR, "#.##") + " " + bullPoiType,
+         style=label.style_label_up, color=color.lime, textcolor=color.black, size=size.small)
+
+// ── Alerts ───────────────────────────────────────────────────────────────────
+alertcondition(shortFire and inLokz, title="Short A+ lokz",
+     message="SMC SHORT lokz v3 | {{ticker}} {{interval}}")
+alertcondition(longFire and inLokz, title="Long A+ lokz",
+     message="SMC LONG lokz v3 | {{ticker}} {{interval}}")
+alertcondition(shortFire and inNyAm, title="Short A+ ny-am",
+     message="SMC SHORT ny-am v3 | {{ticker}} {{interval}}")
+alertcondition(longFire and inNyAm, title="Long A+ ny-am",
+     message="SMC LONG ny-am v3 | {{ticker}} {{interval}}")
+alertcondition(shortFire, title="Salim SMC Short A+",
+     message="SMC SHORT A+ v3 | {{ticker}} {{interval}}")
+alertcondition(longFire, title="Salim SMC Long A+",
+     message="SMC LONG A+ v3 | {{ticker}} {{interval}}")
+
+if shortFire
+    alert("SHORT A+ v3 " + sessLbl + " | " + syminfo.ticker + " " + timeframe.period +
+         " | E " + str.tostring(bearEntry, format.mintick) +
+         " SL " + str.tostring(bearSL, format.mintick) +
+         " TP " + str.tostring(bearTP, format.mintick) +
+         " RR " + str.tostring(bearRR, "#.##") + " " + bearPoiType,
+         alert.freq_once_per_bar_close)
+if longFire
+    alert("LONG A+ v3 " + sessLbl + " | " + syminfo.ticker + " " + timeframe.period +
+         " | E " + str.tostring(bullEntry, format.mintick) +
+         " SL " + str.tostring(bullSL, format.mintick) +
+         " TP " + str.tostring(bullTP, format.mintick) +
+         " RR " + str.tostring(bullRR, "#.##") + " " + bullPoiType,
+         alert.freq_once_per_bar_close)
+
+bgcolor(useLokz and inLokz ? color.new(color.blue, 92) : na, title="lokz session")
+bgcolor(useNyAm and inNyAm ? color.new(color.teal, 92) : na, title="ny-am session")
