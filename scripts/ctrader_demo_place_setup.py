@@ -50,6 +50,12 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--risk", type=float, default=0.25)
     p.add_argument("--symbol", default="EURUSD", help="EURUSD or XAUUSD")
     p.add_argument(
+        "--tier",
+        default="A+",
+        choices=("A+", "A"),
+        help="Signal tier: A+ (full rules, label smc-Aplus) or A (label smc-A)",
+    )
+    p.add_argument(
         "--i-confirm-demo-order",
         action="store_true",
         help="Required confirmation that a real DEMO order may be sent",
@@ -209,8 +215,8 @@ def place_demo_setup(intent: TradeIntent, decision_volume_cents: int) -> dict:
         request.orderType = ProtoOAOrderType.MARKET
         request.tradeSide = ProtoOATradeSide.BUY if is_buy else ProtoOATradeSide.SELL
         request.volume = volume
-        request.label = "smc-research-best"
-        request.comment = intent.setup_id[:50]
+        request.label = "smc-Aplus" if intent.tier == "A+" else "smc-A"
+        request.comment = f"{request.label}|{intent.setup_id}"[:50]
         order_sent = True
         result["planned"] = {
             "side": side,
@@ -290,6 +296,12 @@ def place_demo_setup(intent: TradeIntent, decision_volume_cents: int) -> dict:
                 # Symbol id resolved later; count pending globally still blocked.
                 if response.order:
                     finish("pending orders must be flat before a new setup")
+                    return
+                if len(response.position) >= POLICY.max_total_open_positions:
+                    finish(
+                        f"correlation guard: {len(response.position)} open positions >= "
+                        f"max {POLICY.max_total_open_positions}"
+                    )
                     return
                 # Defer same-symbol position check until after symbol id is known
                 result["snapshot"]["_positions"] = list(response.position)
@@ -445,8 +457,11 @@ def run_preflight(intent: TradeIntent) -> tuple[int, int]:
         str(intent.take_profit),
         "--risk",
         str(intent.risk_percent),
-        "--aplus",
+        "--tier",
+        intent.tier,
     ]
+    if intent.is_aplus:
+        dry_cmd.append("--aplus")
     dry_proc = subprocess.run(dry_cmd, cwd=str(ROOT), capture_output=True, text=True)
     if dry_proc.stdout:
         print(dry_proc.stdout.rstrip())
@@ -482,7 +497,8 @@ def main() -> int:
         stop_loss=args.sl,
         take_profit=args.tp,
         risk_percent=min(args.risk, POLICY.max_risk_percent),
-        is_aplus=True,
+        is_aplus=args.tier == "A+",
+        tier=args.tier,
     )
 
     print("DEMO ONLY — Fusion 10123191 / research_best setup order.")

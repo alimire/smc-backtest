@@ -40,6 +40,12 @@ CRED_PATH = ROOT / "credentials" / "demo.json"
 ALLOWED_ACCOUNT_ID = 47_820_966
 ALLOWED_LOGIN = 10_123_191
 
+# research_best_a = frozen research_best A+ rules + A tier (mid 0.45/0.55),
+# deployed after OOS PASS Jul 2026 (see reports/tier_study.md). Override with
+# SMC_SCAN_PRESET=research_best to run A+ only.
+SCAN_PRESET = os.environ.get("SMC_SCAN_PRESET", "research_best_a")
+TRADE_TIERS = ("A+", "A")
+
 # (broker_symbol, scan_symbol for detector/yahoo fallback)
 # Active DEMO symbols. New FX majors added after Jul 2026 multi-symbol OOS
 # study (research_best / Legacy chop_loose). All new pairs trade broker min volume.
@@ -187,9 +193,9 @@ def fetch_bars(broker_symbol: str, days: int) -> Path:
 
 
 def scan_research_best(broker_symbol: str, scan_symbol: str, days: int, max_age_minutes: int) -> list:
-    recipe = get_scan_preset("research_best")
+    recipe = get_scan_preset(SCAN_PRESET)
     logging.info(
-        "Scanning %s research_best=%s mode=%s session=%s filters=%s",
+        "Scanning %s preset=" + SCAN_PRESET + " recipe=%s mode=%s session=%s filters=%s",
         broker_symbol,
         recipe.name,
         recipe.mode,
@@ -215,17 +221,23 @@ def scan_research_best(broker_symbol: str, scan_symbol: str, days: int, max_age_
     cutoff = now - timedelta(minutes=max_age_minutes)
     fresh = []
     for s in setups:
-        if not s.is_aplus:
+        tier = getattr(s, "tier", "A+")
+        if tier not in TRADE_TIERS:
+            continue
+        if tier == "A+" and not s.is_aplus:
             continue
         st = s.time.replace(tzinfo=None) if getattr(s.time, "tzinfo", None) else s.time
         if st < cutoff:
             continue
         fresh.append(s)
+    n_ap = sum(1 for s in fresh if getattr(s, "tier", "A+") == "A+")
     logging.info(
-        "%s scan complete: %s total setups, %s fresh A+ in last %sm",
+        "%s scan complete: %s total setups, %s fresh (%s A+ / %s A) in last %sm",
         broker_symbol,
         len(setups),
         len(fresh),
+        n_ap,
+        len(fresh) - n_ap,
         max_age_minutes,
     )
     return fresh
@@ -234,6 +246,7 @@ def scan_research_best(broker_symbol: str, scan_symbol: str, days: int, max_age_
 def place_setup(broker_symbol: str, setup, risk: float) -> int:
     key = setup_key(broker_symbol, setup)
     side = "long" if setup.direction == "long" else "short"
+    tier = getattr(setup, "tier", "A+")
     proc = run_py(
         "ctrader_demo_place_setup.py",
         "--setup-id",
@@ -242,6 +255,8 @@ def place_setup(broker_symbol: str, setup, risk: float) -> int:
         broker_symbol,
         "--side",
         side,
+        "--tier",
+        tier,
         "--entry",
         str(setup.entry_price),
         "--sl",
@@ -266,6 +281,7 @@ def place_setup(broker_symbol: str, setup, risk: float) -> int:
             "symbol": broker_symbol,
             "setup_id": key,
             "side": side,
+            "tier": tier,
             "entry": setup.entry_price,
             "sl": setup.stop_loss,
             "tp": setup.take_profit,
@@ -305,7 +321,8 @@ def cycle(args: argparse.Namespace) -> None:
                 logging.info("Skip already-seen setup %s", key)
                 continue
             logging.info(
-                "NEW A+ %s %s entry=%s sl=%s tp=%s rr=%s",
+                "NEW %s %s %s entry=%s sl=%s tp=%s rr=%s",
+                getattr(setup, "tier", "A+"),
                 broker_symbol,
                 setup.direction,
                 setup.entry_price,
@@ -319,6 +336,7 @@ def cycle(args: argparse.Namespace) -> None:
                     "event": "signal",
                     "symbol": broker_symbol,
                     "setup_id": key,
+                    "tier": getattr(setup, "tier", "A+"),
                     "direction": setup.direction,
                     "entry": setup.entry_price,
                     "sl": setup.stop_loss,
@@ -368,10 +386,12 @@ def main() -> int:
     args = parse_args()
     symbols = ",".join(s for s, _ in TRADE_SYMBOLS)
     logging.info(
-        "Starting SMC DEMO bot | account=%s login=%s | symbols=%s | research_best | dry_run=%s",
+        "Starting SMC DEMO bot | account=%s login=%s | symbols=%s | preset=%s tiers=%s | dry_run=%s",
         ALLOWED_ACCOUNT_ID,
         ALLOWED_LOGIN,
         symbols,
+        SCAN_PRESET,
+        "/".join(TRADE_TIERS),
         args.dry_run,
     )
     append_event(
@@ -379,6 +399,8 @@ def main() -> int:
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "event": "service_start",
             "symbols": symbols,
+            "preset": SCAN_PRESET,
+            "tiers": list(TRADE_TIERS),
             "dry_run": args.dry_run,
             "interval": args.interval,
             "fetch_days": args.fetch_days,

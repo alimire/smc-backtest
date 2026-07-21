@@ -107,6 +107,29 @@ SCAN_PRESETS: dict[str, ScanRecipe] = {
         interval="15m",
         label="Legacy chop_loose — OOS best (cTrader M15)",
     ),
+    # A+ (unchanged research_best) + A tier: ONE relaxation — premium/discount
+    # zone widened 0.35/0.65 -> 0.45/0.55 for A-labelled entries only.
+    # Train-selected from {mid 40/60, mid 42/58, mid 45/55, idm_flex}; OOS
+    # (9 symbols, 3-fold WF): A-only n=110, E[R]=1.354, PF=3.26; combined
+    # n 387->497 (x1.28). See reports/tier_study.md. A+ subset bit-identical.
+    "research_best_a": ScanRecipe(
+        name="legacy_chop_loose_a_mid_45_55",
+        mode=STRATEGY_MODE_LEGACY,
+        session="both",
+        min_rr=2.0,
+        filters={
+            **DEFAULT_SCAN_FILTERS,
+            "chop_efficiency_min": 0.15,
+            "chop_max_pivots": 9,
+            "a_tier": "mid",
+            "a_mid_lo": 0.45,
+            "a_mid_hi": 0.55,
+        },
+        advanced=None,
+        data_source="ctrader",
+        interval="15m",
+        label="research_best + A tier (mid 0.45/0.55) — OOS PASS Jul 2026",
+    ),
 }
 
 

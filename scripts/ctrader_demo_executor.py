@@ -48,6 +48,12 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Confirm the signal passed the scanner's A+ filters",
     )
+    parser.add_argument(
+        "--tier",
+        default="A+",
+        choices=("A+", "A"),
+        help="Signal tier: A+ (full rules) or A (one documented relaxation)",
+    )
     return parser.parse_args()
 
 
@@ -346,6 +352,7 @@ def main() -> int:
         take_profit=args.tp,
         risk_percent=args.risk,
         is_aplus=args.aplus,
+        tier=args.tier,
     )
 
     print("DRY RUN ONLY - this program has no order-placement path.")

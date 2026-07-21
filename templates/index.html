@@ -70,6 +70,8 @@
   tr:last-child td { border-bottom: none; }
   tr.aplus td { background: #0d2218; }
   tr.aplus td:last-child { color: #3fb950; font-weight: 700; }
+  tr.atier td { background: #1c2130; }
+  .badge-tier-a { color: #58a6ff; font-weight: 700; }
   .badge-long  { color: #3fb950; }
   .badge-short { color: #f85149; }
   .check { color: #3fb950; }
@@ -216,6 +218,7 @@
   <div class="stats" id="stats" style="display:none">
     <div class="stat"><div class="val" id="s-total">—</div><div class="lbl">Total setups</div></div>
     <div class="stat green"><div class="val" id="s-aplus">—</div><div class="lbl">A+ setups</div></div>
+    <div class="stat"><div class="val" id="s-atier">—</div><div class="lbl">A setups</div></div>
     <div class="stat yellow"><div class="val" id="s-smt">—</div><div class="lbl">A+ with SMT</div></div>
     <div class="stat green"><div class="val" id="s-wr">—</div><div class="lbl">Sim win rate (A+)</div></div>
     <div class="stat"><div class="val" id="s-rr">—</div><div class="lbl">Avg planned RR</div></div>
@@ -232,6 +235,7 @@
   <!-- Tabs -->
   <div class="tabs" id="tabs" style="display:none">
     <div class="tab active" onclick="showTab('aplus', this)">⭐ A+ Setups</div>
+    <div class="tab" onclick="showTab('atier', this)">🅰 A Tier</div>
     <div class="tab" onclick="showTab('all', this)">All Setups</div>
   </div>
 
@@ -360,6 +364,14 @@ async function runBacktest() {
     // Stats
     document.getElementById('s-total').textContent = data.total;
     document.getElementById('s-aplus').textContent = data.aplus;
+    const tierEl = document.getElementById('s-atier');
+    if (tierEl) {
+      const t = (data.tiers && data.tiers['A']) || {};
+      tierEl.textContent = data.a_tier ?? 0;
+      tierEl.title = t.resolved
+        ? `A tier: WR ${t.win_rate}% E[R] ${t.expectancy_r} PF ${t.profit_factor ?? 'inf'}`
+        : 'A tier (single relaxation: mid 0.45/0.55)';
+    }
     document.getElementById('s-smt').textContent   = data.smt_count;
     document.getElementById('s-wr').textContent    = (data.sim_win_rate ?? data.win_rate ?? '—') + '%';
     document.getElementById('s-rr').textContent    = data.avg_planned_rr ?? '—';
@@ -417,7 +429,11 @@ async function runBacktest() {
 function showTab(filter, el) {
   document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
   el.classList.add('active');
-  const rows = filter === 'aplus' ? allRows.filter(r => r.is_aplus) : allRows;
+  const rows = filter === 'aplus'
+    ? allRows.filter(r => r.is_aplus)
+    : filter === 'atier'
+      ? allRows.filter(r => (r.tier || 'A+') === 'A')
+      : allRows;
   renderTable(rows);
 }
 
@@ -437,7 +453,7 @@ function renderTable(rows) {
     <tr>
       <th>Time (UTC)</th><th>Dir</th><th>Entry</th><th>SL</th><th>TP</th>
       <th>RR</th><th>Result</th><th>Liq</th><th>IDM</th><th>POI</th><th>SMT</th>
-      <th>Session</th><th>Gate</th><th>AMD</th><th>A+</th><th>Notes</th>
+      <th>Session</th><th>Gate</th><th>AMD</th><th>Tier</th><th>Notes</th>
     </tr>`;
 
   const outcome = o => {
@@ -448,7 +464,9 @@ function renderTable(rows) {
   };
 
   rows.forEach((r, i) => {
-    const cls = r.is_aplus ? 'aplus clickable' : 'clickable';
+    const cls = r.is_aplus
+      ? 'aplus clickable'
+      : ((r.tier || 'A+') === 'A' ? 'atier clickable' : 'clickable');
     html += `<tr class="${cls}" data-idx="${i}">
       <td>${r.time.slice(0,16)}</td>
       <td>${dir(r.direction)}</td>
@@ -464,7 +482,7 @@ function renderTable(rows) {
       <td>${r.session}</td>
       <td style="color:#8b949e;max-width:180px;overflow:hidden;text-overflow:ellipsis" title="${r.gate_reason || ''}">${r.gate_reason || ''}</td>
       <td>${r.parent_amd_id || ''}</td>
-      <td>${r.is_aplus ? '⭐' : ''}</td>
+      <td>${r.is_aplus ? '⭐ A+' : ((r.tier || 'A+') === 'A' ? '<span class="badge-tier-a">A</span>' : '')}</td>
       <td style="color:#8b949e">${r.notes || ''}</td>
     </tr>`;
   });

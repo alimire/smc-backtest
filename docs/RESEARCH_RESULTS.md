@@ -242,3 +242,80 @@ pytest -q
 python app.py   # http://127.0.0.1:5050 — preset research_best selected by default
 ```
 
+
+
+## A tier — higher-frequency setups (Jul 2026)
+
+Goal: "something a little closer to A+ which will fire more" — **without touching A+**.
+
+Design process (no OOS tuning):
+1. **Reject diagnosis** under frozen `research_best` across all 9 symbols
+   (`research/run_tier_reject_diagnosis.py` → `reports/tier_reject_diagnosis.json`):
+   top candidate-stage rejects were `mid_range` **26,740**, `no_idm_sweep` **20,432**,
+   `chop` 7,179 (already loosened in the frozen recipe).
+2. **Candidates** — exactly ONE gate softened per candidate: `mid 0.40/0.60`,
+   `mid 0.42/0.58`, `mid 0.45/0.55`, and `idm_flex` (unswept IDM allowed when a
+   causal CISD/RBOS confirmation printed after the sweep).
+3. **Train selection** on the walk-forward TRAIN windows only (same 3-fold split
+   as the multi-symbol study). Winner: **`A_mid_45_55`** (train A-only n=133,
+   E[R]=1.456, PF=3.52). `idm_flex` had higher E[R] (1.786) but lower n and a
+   worse losing streak (12).
+4. **OOS** (union of test folds) computed once, for the winner only.
+
+**A-tier rule (`research_best_a` preset):** identical liquidity sweep + IDM sweep +
+POI retest + BOS + chop + session + min RR 2.0 + SL/TP model as A+, but the
+premium/discount ("not mid-range") gate widens from `0.35/0.65` to **`0.45/0.55`**
+for A-labelled entries. A+ keeps `0.35/0.65` and takes precedence — the A+ subset
+was asserted bit-identical with the A tier enabled, and duplicates are impossible
+(one signal per bar; A+ replaces an A duplicate at the same dedupe key).
+
+## A-tier walk-forward study (A+ frozen; A = one relaxation)
+
+Generated 2026-07-21T11:56:44.120413+00:00 — base recipe `legacy_chop_loose (mode=legacy, session=both, min_rr=2.0, filters={'chop_efficiency_min': 0.15, 'chop_max_pivots': 9, 'mid_lo': 0.35, 'mid_hi': 0.65, 'asia_aggressive': False})`.
+
+### Train selection (A-only rows in train windows; no OOS tuning)
+
+| Candidate | Rule | Train n | Train E[R] | Train PF |
+|---|---|---:|---:|---:|
+| `A_mid_40_60` | {'a_tier': 'mid', 'a_mid_lo': 0.4, 'a_mid_hi': 0.6} | 57 | 1.222 | 3.11 |
+| `A_mid_42_58` | {'a_tier': 'mid', 'a_mid_lo': 0.42, 'a_mid_hi': 0.58} | 83 | 1.211 | 2.97 |
+| `A_mid_45_55` **<- selected** | {'a_tier': 'mid', 'a_mid_lo': 0.45, 'a_mid_hi': 0.55} | 133 | 1.456 | 3.52 |
+| `A_idm_flex` | {'a_tier': 'idm_flex'} | 110 | 1.786 | 3.65 |
+
+### OOS (union of test folds) — winner `A_mid_45_55`
+
+| Symbol | A+ n | A+ E[R] | A+ PF | A n | A E[R] | A PF | Comb n | Comb E[R] | Comb PF |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| `EURUSD` | 39 | 1.621 | 3.53 | 14 | 1.096 | 2.92 | 53 | 1.482 | 3.38 |
+| `XAUUSD` | 12 | 2.854 | 4.81 | 3 | -1.000 | 0 | 15 | 2.083 | 3.60 |
+| `GBPUSD` | 42 | 1.476 | 3.39 | 18 | 0.518 | 1.67 | 60 | 1.189 | 2.78 |
+| `USDJPY` | 37 | 1.515 | 3.44 | 14 | 0.796 | 2.11 | 51 | 1.318 | 3.04 |
+| `AUDUSD` | 50 | 1.960 | 4.92 | 9 | 1.920 | 5.32 | 59 | 1.954 | 4.98 |
+| `USDCAD` | 58 | 1.388 | 3.37 | 14 | 1.810 | 4.62 | 72 | 1.470 | 3.58 |
+| `NZDUSD` | 56 | 0.867 | 2.28 | 14 | 1.063 | 2.65 | 70 | 0.906 | 2.35 |
+| `USDCHF` | 55 | 1.261 | 2.98 | 18 | 2.014 | 5.53 | 73 | 1.447 | 3.46 |
+| `USDX` | 38 | 6.299 | 9.55 | 6 | 3.730 | 8.46 | 44 | 5.949 | 9.44 |
+| **ALL** | 387 | 1.941 | 4.09 | 110 | 1.354 | 3.26 | 497 | 1.811 | 3.91 |
+
+**Acceptance:** PASS — A-only n=110, E[R]=1.354, PF=3.257; combined n uplift x1.284.
+
+
+
+### Deployment (DEMO only)
+
+- Acceptance bar (A-only OOS n>=15, E[R]>0, PF>1, combined n up): **PASS**
+  (A-only n=110, E[R]=1.354, PF=3.26; combined n 387 -> 497, x1.28 — a clear
+  increase, though short of the 2x stretch target).
+- Bot preset switched to `research_best_a`; order labels `smc-Aplus` vs `smc-A`;
+  A tier always trades broker **minimum volume**; one position per symbol kept.
+- **Correlation guard** (all 9 symbols are USD legs): max **3 total open
+  positions** account-wide, enforced in `executor_core.evaluate_trade` and in
+  the order-placement reconcile check. Applies to both tiers.
+- XAUUSD A-only OOS was 3 trades, all losses (n too small to read) — monitor;
+  per-symbol A-tier disable is a follow-up if live A trades underperform.
+
+Reproduce:
+```bash
+python research/run_tier_reject_diagnosis.py
+python research/run_tier_study.py
+```

@@ -196,7 +196,7 @@ def simulate_rows(
         s["exit_time"] = exit_time or "N/A"
 
     for r in rows:
-        if not r.get("is_aplus"):
+        if "outcome" not in r:
             r["outcome"] = "—"
             r["exit_time"] = "—"
 

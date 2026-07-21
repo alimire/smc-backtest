@@ -82,6 +82,7 @@ class TradeSetup:
     smt_confluence: bool
     session: str
     is_aplus: bool
+    tier: str = "A+"  # "A+" = full rules; "A" = one documented relaxation
     notes: str = ""
     strategy_mode: str = "legacy"
     strategy_version: str = "1.1.0"
@@ -830,6 +831,7 @@ def scan_setups(
         AdvancedConfig,
         build_advanced_timeline,
         evaluate_advanced_gates,
+        has_rbos_after_liq,
         is_fbos_break,
     )
     from data_fetch import bars_for_hours
@@ -844,6 +846,15 @@ def scan_setups(
     mid_lo = float(filters.get("mid_lo", 0.35))
     mid_hi = float(filters.get("mid_hi", 0.65))
     asia_aggressive = bool(filters.get("asia_aggressive", False))
+    # A tier: ONE documented relaxation on top of unchanged A+ rules.
+    #   ""         -> disabled (default; scan output identical to before)
+    #   "mid"      -> entries in a modestly widened premium/discount zone
+    #                 (a_mid_lo/a_mid_hi) that fail strict A+ mid_lo/mid_hi
+    #   "idm_flex" -> unswept IDM allowed when a causal CISD/RBOS confirmation
+    #                 in trade direction printed after the liquidity sweep
+    a_tier_rule = str(filters.get("a_tier", "") or "").strip().lower()
+    a_mid_lo = float(filters.get("a_mid_lo", 0.40))
+    a_mid_hi = float(filters.get("a_mid_hi", 0.60))
 
     if candles is None:
         if not quiet:
@@ -886,8 +897,13 @@ def scan_setups(
         else:
             timeline = build_advanced_timeline(candles, cfg)
 
+    # idm_flex A tier needs the causal CISD/RBOS ledger even in legacy mode
+    a_timeline = timeline
+    if a_tier_rule == "idm_flex" and a_timeline is None:
+        a_timeline = build_advanced_timeline(candles, cfg)
+
     setups: list[TradeSetup] = []
-    seen: set = set()
+    seen: dict = {}  # dedupe key -> index into setups (A+ takes precedence over A)
     reject_counts: dict[str, int] = {}
 
     def _bump(reason: str) -> None:
@@ -933,6 +949,7 @@ def scan_setups(
                 if ok:
                     liq_idx = j
 
+            tier = "A+"
             idm = find_idm_swing(candles, swings, i, direction, liq_idx)
             idm_ok = (
                 idm is not None
@@ -940,8 +957,18 @@ def scan_setups(
                 and idm_was_swept(candles, idm, i, direction, buf)
             )
             if not idm_ok:
-                _bump("no_idm_sweep")
-                continue
+                # A tier (idm_flex): unswept IDM allowed only with a causal
+                # CISD/RBOS confirmation in trade direction after the sweep.
+                if (
+                    a_tier_rule == "idm_flex"
+                    and a_timeline is not None
+                    and has_rbos_after_liq(a_timeline, liq_idx, i, direction)
+                ):
+                    tier = "A"
+                    _bump("a_tier:idm_flex")
+                else:
+                    _bump("no_idm_sweep")
+                    continue
 
             entry = candles[i].close
             if ob:
@@ -951,8 +978,15 @@ def scan_setups(
 
             r_lo, r_hi = dealing_range(candles, from_idx, i)
             if not is_major_idm_zone(entry, idm, direction, r_lo, r_hi, mid_lo=mid_lo, mid_hi=mid_hi):
-                _bump("mid_range")
-                continue
+                # A tier (mid): same rules, modestly widened premium/discount zone.
+                if a_tier_rule == "mid" and is_major_idm_zone(
+                    entry, idm, direction, r_lo, r_hi, mid_lo=a_mid_lo, mid_hi=a_mid_hi
+                ):
+                    tier = "A"
+                    _bump("a_tier:mid")
+                else:
+                    _bump("mid_range")
+                    continue
 
             if is_choppy(
                 candles, i, efficiency_min=chop_efficiency_min, max_pivots=chop_max_pivots
@@ -1017,12 +1051,16 @@ def scan_setups(
 
             key = (_date(candles[i].time), sess, trade_dir, round(entry, 4))
             if key in seen:
-                _bump("duplicate")
-                continue
-            seen.add(key)
-            _bump("accept")
+                prev = setups[seen[key]]
+                # A+ precedence: an A+ signal replaces an earlier A duplicate;
+                # anything else is a plain duplicate.
+                if tier == "A+" and prev.tier == "A":
+                    _bump("a_tier:upgraded_to_aplus")
+                else:
+                    _bump("duplicate")
+                    continue
 
-            is_aplus = (
+            is_aplus = tier == "A+" and (
                 liq_ok and idm_ok and poi_type in ("OB", "FVG", "OB+FVG")
                 and smt_ready
             )
@@ -1030,7 +1068,9 @@ def scan_setups(
             notes = []
             if liq_src:
                 notes.append(f"liq:{liq_src}")
-            notes.append("IDM swept ✓")
+            if tier == "A":
+                notes.append(f"tier:A({a_tier_rule})")
+            notes.append("IDM swept ✓" if idm_ok else "IDM unswept (A tier)")
             notes.append("BOS after liq ✓" if mode == STRATEGY_MODE_LEGACY else "RBOS/CISD ✓")
             notes.append("major IDM zone ✓")
             if parent_amd_id:
@@ -1040,7 +1080,7 @@ def scan_setups(
             elif check_smt(candles, correlated, i, direction):
                 notes.append("SMT ✓")
 
-            setups.append(TradeSetup(
+            new_setup = TradeSetup(
                 time=candles[i].time,
                 direction=trade_dir,
                 entry_price=round(entry, 5 if not is_dxy else 3),
@@ -1053,6 +1093,7 @@ def scan_setups(
                 smt_confluence=smt,
                 session=sess,
                 is_aplus=is_aplus,
+                tier=tier,
                 notes=", ".join(notes),
                 strategy_mode=mode,
                 strategy_version=ver,
@@ -1060,7 +1101,13 @@ def scan_setups(
                 parent_amd_id=parent_amd_id,
                 cisd_bar=cisd_bar,
                 fbos_seen=fbos_seen,
-            ))
+            )
+            if key in seen:
+                setups[seen[key]] = new_setup
+            else:
+                seen[key] = len(setups)
+                setups.append(new_setup)
+                _bump("accept")
 
     if return_debug:
         # Candidate-stage rejects (exclude early funnel noise + accept marker)
@@ -1081,6 +1128,9 @@ def scan_setups(
                 "mid_lo": mid_lo,
                 "mid_hi": mid_hi,
                 "asia_aggressive": asia_aggressive,
+                "a_tier": a_tier_rule,
+                "a_mid_lo": a_mid_lo,
+                "a_mid_hi": a_mid_hi,
             },
             "data_source": data_source,
             "candles": candles,

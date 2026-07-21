@@ -124,14 +124,18 @@ def run_backtest():
             rows.append(d)
 
         aplus = [r for r in rows if r["is_aplus"]]
+        a_tier = [r for r in rows if r.get("tier") == "A"]
 
         try:
+            # aplus_only=False: A-tier rows are accepted setups too and must be
+            # simulated; scanner emits only tradeable rows.
             sim = simulate_rows(
                 rows,
                 symbol=symbol,
                 days=days,
                 interval=interval,
                 candles=debug.get("candles"),
+                aplus_only=False,
             )
             rows = sim["rows"]
         except Exception as sim_err:
@@ -142,9 +146,28 @@ def run_backtest():
                 "sim_error": str(sim_err),
             }
 
+        from simulator_core import compute_metrics
+
+        def tier_stats(tier_rows):
+            m = compute_metrics(tier_rows)
+            return {
+                "n": m["setups"],
+                "resolved": m["resolved"],
+                "win_rate": m["sim_win_rate"],
+                "expectancy_r": m["expectancy_r"],
+                "profit_factor": m["profit_factor"],
+                "wins": m["sim_wins"],
+                "losses": m["sim_losses"],
+            }
+
         return jsonify({
             "total":     len(rows),
             "aplus":     len(aplus),
+            "a_tier":    len(a_tier),
+            "tiers": {
+                "A+": tier_stats([r for r in rows if r.get("tier", "A+") == "A+"]),
+                "A": tier_stats([r for r in rows if r.get("tier") == "A"]),
+            },
             "smt_count": sum(1 for r in aplus if r["smt_confluence"]),
             "sim_wins":       sim.get("sim_wins", 0),
             "sim_losses":     sim.get("sim_losses", 0),

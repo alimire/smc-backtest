@@ -9,11 +9,17 @@ ATAS Platform is still installed under `C:\Program Files (x86)\ATAS Platform` fo
 ## Path chosen
 
 **A) Headless cTrader Open API demo bot** on the Windows VPS:
-- Preset: `research_best` = Legacy `chop_loose` (chop 0.15 / 9 pivots, session both, min RR 2.0)
+- Preset: `research_best_a` = frozen `research_best` A+ rules **plus** an A tier
+  (ONE relaxation: premium/discount zone 0.35/0.65 -> 0.45/0.55; OOS PASS Jul 2026,
+  see `reports/tier_study.md`). `SMC_SCAN_PRESET=research_best` reverts to A+ only.
+- Orders are labelled `smc-Aplus` (full A+ rules) vs `smc-A` (A tier). A tier
+  always trades broker **minimum volume**.
+- **Correlation guard:** max **3 total open positions** account-wide (all 9
+  symbols are USD-correlated); still one position per symbol.
 - Symbols: **EURUSD, XAUUSD, GBPUSD, USDJPY, AUDUSD, USDCAD, NZDUSD, USDCHF, USDX**
   (all passed multi-symbol OOS bar Jul 2026; new FX majors + USDX trade broker min volume;
    gold pip=0.1 / JPY pip=0.01 / USDX pip=0.01, minVolume 100 / majors pip=0.0001)
-- Polls ~every 60s, refreshes M15 bars per symbol, scans A+, places DEMO market orders with SL/TP
+- Polls ~every 60s, refreshes M15 bars per symbol, scans A+ **and A tier**, places DEMO market orders with SL/TP
 - **One open position per symbol** (EUR and gold may both be open)
 - Survives reboot via Scheduled Task `SMC-cTrader-DemoBot` (runs as `SYSTEM` at startup)
 
@@ -95,12 +101,14 @@ After code changes, re-sync the package to `C:\smc-backtest` on the VPS (S3/SSM 
 - [x] `DEMO=1` env required to start / place
 - [x] `credentials/demo.json` → `"host": "demo"`
 - [x] Account allowlist Fusion demo only
-- [x] Max 0.25% risk, min 2R, **one position per symbol**, 1% daily loss cap
+- [x] Max 0.25% risk, min 2R, **one position per symbol**, **max 3 open positions total** (correlation guard), 1% daily loss cap
+- [x] A-tier orders labelled `smc-A`, broker minimum volume only, DEMO only
 - [x] Allowlisted symbols: `EURUSD`, `XAUUSD`, `GBPUSD`, `USDJPY`, `AUDUSD`, `USDCAD`, `NZDUSD`, `USDCHF`, `USDX`
 - [ ] **Do not** point credentials at live or change `host` to live
 
 ## Caveats
 
+- A tier OOS (Jul 2026, 9 symbols, 3-fold WF): A-only n=110, E[R]=1.354, PF=3.26; combined n 387→497 (x1.28). A+ subset unchanged (asserted). See `reports/tier_study.md`.
 - `research_best` multi-symbol OOS (Jul 2026): all 9 symbols cleared n≥10 / E[R]>0 / PF>1 on ~24mo cTrader M15. See `docs/RESEARCH_RESULTS.md` multi-symbol table. XAUUSD OOS: n=12, E[R]=2.854, PF=4.81. USDX (Fusion id 120) OOS: n=38, WR 26.3%, E[R]=6.30, PF=9.55 (see `reports/usdx_study.md`).
 - Gold min volume on Fusion demo is `100` (0.01 lot); pip value sizing uses broker `lotSize`/`pipPosition`.
 - Pending orders still block new entries globally (must be flat on pending).

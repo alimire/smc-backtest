@@ -34,6 +34,9 @@ class TradeIntent:
     take_profit: float
     risk_percent: float = 0.25
     is_aplus: bool = True
+    # "A+" = full research_best rules; "A" = one documented relaxation
+    # (mid 0.45/0.55). A-tier orders always trade broker minimum volume.
+    tier: str = "A+"
 
 
 @dataclass(frozen=True)
@@ -82,6 +85,13 @@ class ExecutionPolicy:
     min_volume_symbols: frozenset[str] = field(
         default_factory=lambda: FX_MIN_VOLUME_SYMBOLS
     )
+    # Signal tiers allowed to trade (A added Jul 2026 after OOS PASS).
+    allowed_tiers: frozenset[str] = field(
+        default_factory=lambda: frozenset({"A+", "A"})
+    )
+    # Correlation guard: all 9 symbols are USD-correlated, so cap TOTAL
+    # simultaneous open positions across the account (any tier).
+    max_total_open_positions: int = 3
 
 
 @dataclass(frozen=True)
@@ -197,7 +207,12 @@ def evaluate_trade(
         reasons.append("setup_id is required")
     elif intent.setup_id in seen_setup_ids:
         reasons.append("duplicate setup_id")
-    if not intent.is_aplus:
+    tier = (intent.tier or "A+").strip().upper()
+    if tier not in policy.allowed_tiers:
+        reasons.append(
+            f"tier {tier} not allowed (allowed: {', '.join(sorted(policy.allowed_tiers))})"
+        )
+    if tier == "A+" and not intent.is_aplus:
         reasons.append("only A+ setups are allowed")
     if not all(math.isfinite(price) and price > 0 for price in prices):
         reasons.append("entry, stop_loss, and take_profit must be positive finite prices")
@@ -211,6 +226,10 @@ def evaluate_trade(
     open_for_symbol = snapshot.open_positions_for_symbol
     if open_for_symbol >= per_sym_limit:
         reasons.append("maximum open-position limit reached for symbol")
+    if snapshot.open_positions >= policy.max_total_open_positions:
+        reasons.append(
+            f"correlation guard: max {policy.max_total_open_positions} total open positions reached"
+        )
     if snapshot.pending_orders > policy.max_pending_orders:
         reasons.append("pending orders must be flat before a new setup")
     if not snapshot.deal_history_complete:
@@ -263,6 +282,9 @@ def evaluate_trade(
     )
     if symbol in policy.min_volume_symbols and instrument.min_volume_cents > 0:
         # New pairs deliberately trade the broker minimum volume only.
+        broker_volume = instrument.min_volume_cents
+    if tier == "A" and instrument.min_volume_cents > 0:
+        # A tier never sizes up: broker minimum volume regardless of symbol.
         broker_volume = instrument.min_volume_cents
     if broker_volume < instrument.min_volume_cents:
         reasons.append("calculated volume is below the broker minimum")
