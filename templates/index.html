@@ -96,7 +96,7 @@
 
 <header>
   <h1>📈 SMC Backtest</h1>
-  <span>Salim SMC v3 · lokz / ny-am · protected + major IDM · SMT tap · <em id="appVersion">sim v3</em></span>
+  <span>Salim SMC v3 · Legacy / Advanced · FBOS+CISD+AMD · <em id="appVersion">v1.2.0</em></span>
 </header>
 
 <div class="container">
@@ -117,6 +117,14 @@
         <option value="30">30 days</option>
         <option value="60" selected>60 days</option>
         <option value="90">90 days</option>
+        <option value="730">730 days (cTrader)</option>
+      </select>
+    </div>
+    <div class="field">
+      <label>Data source</label>
+      <select id="data_source">
+        <option value="yahoo">Yahoo (short 15m)</option>
+        <option value="ctrader" selected>cTrader M15 cache (~24mo)</option>
       </select>
     </div>
     <div class="field">
@@ -140,9 +148,28 @@
       <label>Min RR</label>
       <input id="min_rr" type="number" value="2" step="0.5" style="width:80px">
     </div>
+    <div class="field">
+      <label>Strategy mode</label>
+      <select id="strategy_mode">
+        <option value="legacy">Legacy (v1.1.0 mechanical)</option>
+        <option value="advanced" selected>Advanced (v1.2.0 FBOS/CISD/AMD)</option>
+      </select>
+    </div>
+    <div class="field">
+      <label>Preset</label>
+      <select id="preset">
+        <option value="">Manual / default gates</option>
+        <option value="research_best" selected>research_best — Legacy chop_loose (cTrader M15 OOS)</option>
+        <option value="advanced_default">advanced_default</option>
+        <option value="advanced_oos_candidate">advanced_oos_candidate</option>
+      </select>
+    </div>
     <button id="runBtn" onclick="runBacktest()">▶ Run Backtest</button>
     <div class="spinner" id="spinner">Running scan…</div>
   </div>
+  <p class="stats-note" id="presetHint" style="display:block;margin-top:-8px">
+    <strong>research_best</strong> forces Legacy · session=both · min_rr=2 · chop 0.15/9 · mid 0.35/0.65 · cTrader M15.
+  </p>
 
   <div id="error"></div>
 
@@ -197,9 +224,10 @@
   </div>
   <p class="stats-note" id="statsNote" style="display:none">
     Sim win rate = A+ trades where TP hit before SL on forward candles (realistic).
-    v3 filters: BOS after liq, major IDM zone, no chop, SMT tap before entry.
+    Legacy: mechanical BOS. Advanced: FBOS≠BOS, CISD/RBOS, Parent AMD (forward-only).
     Planned RR = distance to liquidity target ÷ risk. Expectancy ≈ edge per 1R risked.
   </p>
+  <p class="stats-note" id="modeNote" style="display:none"></p>
 
   <!-- Tabs -->
   <div class="tabs" id="tabs" style="display:none">
@@ -217,6 +245,24 @@
 <script>
 let allRows = [];
 let backtestExpectancy = null;
+
+function applyResearchBestUI() {
+  const preset = document.getElementById('preset').value;
+  const hint = document.getElementById('presetHint');
+  if (preset === 'research_best') {
+    document.getElementById('strategy_mode').value = 'legacy';
+    document.getElementById('session').value = 'both';
+    document.getElementById('min_rr').value = '2';
+    document.getElementById('interval').value = '15m';
+    document.getElementById('data_source').value = 'ctrader';
+    document.getElementById('days').value = '730';
+    if (hint) hint.style.display = 'block';
+  } else if (hint) {
+    hint.style.display = preset ? 'none' : 'block';
+  }
+}
+document.getElementById('preset').addEventListener('change', applyResearchBestUI);
+applyResearchBestUI();
 
 function fmtMoneySigned(n, forceSign) {
   if (n == null || Number.isNaN(n)) return '—';
@@ -290,6 +336,9 @@ async function runBacktest() {
     session:  document.getElementById('session').value,
     interval: document.getElementById('interval').value,
     min_rr:   document.getElementById('min_rr').value,
+    strategy_mode: document.getElementById('strategy_mode').value,
+    preset: document.getElementById('preset').value,
+    data_source: document.getElementById('data_source').value,
   };
 
   try {
@@ -321,6 +370,25 @@ async function runBacktest() {
     }
     document.getElementById('stats').style.display = 'grid';
     document.getElementById('statsNote').style.display = data.sim_error ? 'none' : 'block';
+    const modeNote = document.getElementById('modeNote');
+    const rejects = data.reject_counts || {};
+    const rejectTxt = Object.keys(rejects).length
+      ? ' Rejects: ' + Object.entries(rejects).map(([k,v]) => k + '=' + v).join(', ')
+      : '';
+    modeNote.style.display = 'block';
+    const recipe = data.recipe || {};
+    const filt = data.scan_filters || {};
+    const recipeTxt = recipe.variant
+      ? ` · recipe ${recipe.variant} (${recipe.label || ''}) chop=${filt.chop_efficiency_min}/${filt.chop_max_pivots}`
+      : '';
+    const dataTxt = data.data_source
+      ? ` · data ${data.data_source} ${data.data_bars ?? '?'} bars / ${data.data_days ?? '?'}d`
+      : '';
+    modeNote.textContent =
+      `Mode ${data.strategy_mode || '?'} ${data.strategy_version || ''} · ` +
+      `session ${data.session || '?'} · min_rr ${data.min_rr ?? '?'} · ` +
+      `FBOS ${data.fbos_count ?? 0} · RBOS ${data.rbos_count ?? 0} · CISD ${data.cisd_count ?? 0} · AMD ${data.amd_count ?? 0}` +
+      recipeTxt + dataTxt + rejectTxt;
     if (data.sim_error) {
       errBox.textContent = '⚠ Simulation skipped: ' + data.sim_error;
       errBox.style.display = 'block';
@@ -369,7 +437,7 @@ function renderTable(rows) {
     <tr>
       <th>Time (UTC)</th><th>Dir</th><th>Entry</th><th>SL</th><th>TP</th>
       <th>RR</th><th>Result</th><th>Liq</th><th>IDM</th><th>POI</th><th>SMT</th>
-      <th>Session</th><th>A+</th><th>Notes</th>
+      <th>Session</th><th>Gate</th><th>AMD</th><th>A+</th><th>Notes</th>
     </tr>`;
 
   const outcome = o => {
@@ -394,6 +462,8 @@ function renderTable(rows) {
       <td><b>${r.poi_type}</b></td>
       <td>${ck(r.smt_confluence)}</td>
       <td>${r.session}</td>
+      <td style="color:#8b949e;max-width:180px;overflow:hidden;text-overflow:ellipsis" title="${r.gate_reason || ''}">${r.gate_reason || ''}</td>
+      <td>${r.parent_amd_id || ''}</td>
       <td>${r.is_aplus ? '⭐' : ''}</td>
       <td style="color:#8b949e">${r.notes || ''}</td>
     </tr>`;
